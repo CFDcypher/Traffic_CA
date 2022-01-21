@@ -344,8 +344,8 @@ cdef move_SNFS(int[:,:] cars_list, int[:,:] sites, int N_c, double P_lc, int num
     Single move action: update system from t to t+1 with revised S-NFS model
     '''
     cdef int S = 2
-    cdef int G = 20
-    cdef double q = 0.6
+    cdef int G = 15
+    cdef double q = 0.99
     cdef double r = 0.5
     cdef int V_max = 5
     cdef double[:] P_rbrake = np.array([0.999, 0.99, 0.98, 0.01]) #np.array([1.0, 1.0, 1.0, 1.0])
@@ -355,6 +355,7 @@ cdef move_SNFS(int[:,:] cars_list, int[:,:] sites, int N_c, double P_lc, int num
     cdef int num_cars = len(cars_list)
     cdef int[:,:] g
     cdef int[:,:] v_next
+    cdef int i
 
     sites, num_change_lane = change_lane_SNFS(cars_list, sites, P_lc, N_c, num_change_lane) # try to change lane
     
@@ -390,6 +391,7 @@ cdef move_W184(int[:,:] cars_list, int[:,:] sites, int n_hdv, int max_platoon_si
     cdef int cur_ind
     cdef int ind
     cdef int s
+    cdef int i
 
     if num_cars == num_cells*num_places:
         return sites, cars_list, num_change_lane
