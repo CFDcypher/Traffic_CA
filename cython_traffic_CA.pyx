@@ -439,6 +439,61 @@ cdef move_W184(int[:,:] cars_list, int[:,:] sites, int n_hdv, int max_platoon_si
     sites = update_car_sites(cars_list, sites)
     return sites, cars_list, num_change_lane
 
+cdef move_KKW(int[:,:] cars_list, int[:,:] sites, int N_c, double P_lc, int num_change_lane):
+    '''
+    Single move action: update system from t to t+1 with Kerner-Klenov-Wolf model
+    '''
+    cdef int k = 3
+    cdef double p_brake = 0.1
+    cdef double p_accel = 0.1
+    cdef int V_max = 5
+    
+    cdef int num_cells = sites.shape[1]
+    cdef int num_cars = len(cars_list)
+    cdef int[:] v = np.zeros(num_cars, dtype = int)
+    cdef int[:,:] g
+    cdef int[:,:] v_next
+    cdef int i
+    cdef double[:] rand_arr = np.random.random(num_cars)
+    cdef int G
+    cdef int v_c
+    cdef int v_w
+    cdef int eta
+    
+    
+    sites, num_change_lane = change_lane_SNFS(cars_list, sites, P_lc, N_c, num_change_lane) # try to change lane
+    g, v_next = g_v_next(cars_list, sites, 1)
+
+    for i in range(num_cars):
+        v[i] = cars_list[i,2]
+        G = k*v[i]
+        if g[i, 0] > G:
+            v_c = v[i] + 1
+        else:
+            if v_next[i,0] > v[i]:
+                v_c = v[i] + 1
+            elif v_next[i,0] == v[i]:
+                v_c = v[i]
+            else:
+                v_c = v[i] - 1
+        v_w = max(0, min(V_max, v_c, g[i,0]))
+        if rand_arr[i] < p_brake:
+            eta = -1
+        elif (p_brake <= rand_arr[i]) and (rand_arr[i] < p_brake + p_accel):
+            eta = 1
+        else:
+            eta = 0
+        v[i] = max(0, min(V_max, v_w + eta, v[i] + 1, g[i,0]))
+    
+    #update cars positions and velocities
+    sites = empy_car_sites(cars_list, sites)
+    for i in range(num_cars):
+        cars_list[i,2] = v[i]
+        cars_list[i,1] = (cars_list[i,1] + v[i])%num_cells
+    sites = update_car_sites(cars_list, sites)
+    return sites, cars_list, num_change_lane
+
+
 cdef macroparameters(int [:,:] sites):
     '''
     Returns: density (float) and flux (float)
@@ -528,15 +583,17 @@ cpdef run_simulation(int num_lanes, int num_places, double density, double P_lc,
         fill_episode(X, 0, episodes)
 
     for i in range(time_steady):
-        X, C, num_change_lane = move_SNFS(C, X, N_c, P_lc, num_change_lane)
+        #X, C, num_change_lane = move_SNFS(C, X, N_c, P_lc, num_change_lane)
         #X, C, num_change_lane = move_W184(C, X, n_hdv, max_platoon_size, N_c, P_lc, num_change_lane)
+        X, C, num_change_lane =  move_KKW(C, X, N_c, P_lc, num_change_lane)
 
         if visualise == True:
             fill_episode(X, i+1, episodes)
 
     for i in range(num_iters):
-        X, C, num_change_lane = move_SNFS(C, X, N_c, P_lc, num_change_lane)
+        #X, C, num_change_lane = move_SNFS(C, X, N_c, P_lc, num_change_lane)
         #X, C, num_change_lane = move_W184(C, X, n_hdv, max_platoon_size, N_c, P_lc, num_change_lane)
+        X, C, num_change_lane =  move_KKW(C, X, N_c, P_lc, num_change_lane)
 
         if visualise == True:
             fill_episode(X, time_steady + i + 1, episodes)
