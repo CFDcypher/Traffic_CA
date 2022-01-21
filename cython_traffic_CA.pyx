@@ -443,9 +443,9 @@ cdef move_KKW(int[:,:] cars_list, int[:,:] sites, int N_c, double P_lc, int num_
     '''
     Single move action: update system from t to t+1 with Kerner-Klenov-Wolf model
     '''
-    cdef int k = 3
-    cdef double p_brake = 0.1
-    cdef double p_accel = 0.1
+    cdef int k = 2
+    cdef double p_brake = 0.25
+    cdef double p_accel = 0.25
     cdef int V_max = 5
     
     cdef int num_cells = sites.shape[1]
