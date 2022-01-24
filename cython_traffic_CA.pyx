@@ -136,16 +136,33 @@ cdef double[:] prob_slow_down(int[:,:] cars_list, int[:,:] g, int[:,:] v_next, i
                 p[i] = P[3]
     return p
 
-cdef dist_and_vels(int [:,:] cars_list, int[:,:] sites):
+cdef int neighb_car_type(int lane, int position, int distance, int max_distance, int n_hdv, int [:,:] cars_list):
+    cdef int i
+    cdef int t
+    cdef int num_cars = len(cars_list)
+    
+    if distance >= max_distance:
+        t = 0
+    else:
+        for i in range(num_cars):
+            if (cars_list[i, 0] == lane and cars_list[i, 1] == position): #(current_position + dist[k] + 1)%num_cells):
+                if i > n_hdv:
+                    t = 2
+                else:
+                    t = 1
+    return t
+
+cdef dist_and_vels(int [:,:] cars_list, int[:,:] sites, int n_hdv):
     # this works properly for 2 lanes only!
     cdef int num_lanes = sites.shape[0]
     cdef int num_cells = sites.shape[1]
     cdef int num_cars = len(cars_list)
     cdef int H = 1
-    cdef int g_max = 20
-    cdef int[:] dist = np.zeros(4*H, dtype = int)  
+    cdef int g_max = 15
+    cdef int [:] dist = np.zeros(4*H, dtype = int)  
     cdef int [:,:,:,:] g = np.zeros((num_cars, num_lanes, 2, H), dtype = int)
     cdef int [:,:,:,:] v = np.zeros_like(g)
+    cdef int [:,:,:,:] t = np.zeros_like(g)
     cdef int present_lane
     cdef int current_position
     cdef int i
@@ -158,20 +175,20 @@ cdef dist_and_vels(int [:,:] cars_list, int[:,:] sites):
         current_position = cars_list[i,1]
         for k in range(4*H):
             dist[k] = 0
-        
         k = 0
         
         for j in range(H):        
             for lane in range(num_lanes):
                 if lane != present_lane:
                     dist[k:k+1] = -1
-                # forward cars positions (g_0) and speed (v_0) in the lane
+                # forward cars positions (g_0), speed (v_0) and type (t_0) in the lane
                 while sites[lane, (current_position + dist[k] + 1)%num_cells] < 0:
                     dist[k] += 1
-                    if dist[k] > g_max:
+                    if dist[k] >= g_max:
                         break
                 g[i,lane,0,j] += dist[k]
                 v[i,lane,0,j] = sites[lane, (current_position + dist[k] + 1)%num_cells]
+                t[i,lane,0,j] = neighb_car_type(lane, (current_position + dist[k] + 1)%num_cells, dist[k], g_max, n_hdv, cars_list)
                 dist[k] += 1
                 k += 1
                 
@@ -182,9 +199,10 @@ cdef dist_and_vels(int [:,:] cars_list, int[:,:] sites):
                         break
                 g[i,lane,1,j] += dist[k]
                 v[i,lane,1,j] = sites[lane, (current_position - (dist[k] + 1))]
+                t[i,lane,0,j] = neighb_car_type(lane, (current_position - (dist[k] + 1)), dist[k], g_max, n_hdv, cars_list)
                 dist[k] += 1
                 k += 1
-    return g, v
+    return g, v, t
 
 
 cdef bint CL_incentive_criterion(int vel, int g_next_CL, int v_next_CL, str model, str agent_type):
@@ -200,27 +218,25 @@ cdef bint CL_incentive_criterion(int vel, int g_next_CL, int v_next_CL, str mode
         if agent_type == 'HDV':
             return (g_next_CL == 1 or g_next_CL == 2)
         elif agent_type == 'CAV':
-            return (g_next_CL == 1 or g_next_CL == 2)
+            return g_next_CL < 2
         elif agent_type == 'HAV':
             return True
 
-cdef bint CL_safety_criterion(int vel, int g_next_AL, int v_next_AL, int g_beh_AL, int v_beh_AL, str model, str agent_type):
+cdef bint CL_safety_criterion(int vel, int g_next_AL, int v_next_AL, int g_beh_AL, int v_beh_AL, int t_next_CL, int t_next_AL, str model, str agent_type):
     if model == 'S-NFS':
         if agent_type == 'HDV':
             return (vel < g_next_AL+v_next_AL) and (vel > v_beh_AL-g_beh_AL) and (g_next_AL>0)
         elif agent_type == 'CAV':
             return (vel < g_next_AL+v_next_AL) and (vel > v_beh_AL-g_beh_AL) and (g_next_AL>0)
         elif agent_type == 'HAV':
-            return True #((v[i,lane,1,0] + v[i,lane,1,1] > v[i,present_lane,1,1] + v[i,present_lane,0,1]) and (g[i,lane,1,0] <= 15) and (vel[i] > v[i,lane,1,0]-g[i,lane,1,0]) and (g[i,lane,0,0]>0))
-
+            return (g_next_AL <= 15) and (vel > v_beh_AL-g_beh_AL) and (g_next_AL>0)  # and ((v_beh_AL > v_beh_CL (no such input yet) =? v[i,present_lane,1,1] + v[i,present_lane,0,1])
     elif model == 'W184':
         if agent_type == 'HDV':
             return (g_next_AL > 2 and g_beh_AL > 1)
         elif agent_type == 'CAV':
-            return (g_next_AL > 2 and g_beh_AL > 1)
+            return (g_next_AL > 1 and g_beh_AL > 1) #and ((t_next_AL == 2 and t_next_CL == 1) or ((t_next_AL == 1 and t_next_CL == 1)))
         elif agent_type == 'HAV':
-            return (g_beh_AL == 1 and g_next_AL > 0) #g[i,present_lane,1,0] > 1 
-
+            return (g_beh_AL == 1 and g_next_AL > 0) #g[i,present_lane,1,0] > 1 means backwards
 
 cdef change_lane(int[:,:] cars_list, int[:,:] sites, int n_hdv, double P_lc, int num_change_lane, str model):
     cdef int[:] vel = cars_list[:,2]
@@ -229,13 +245,16 @@ cdef change_lane(int[:,:] cars_list, int[:,:] sites, int n_hdv, double P_lc, int
     cdef int i
     cdef int lane
     cdef int present_lane
+    cdef int cur_ind
     cdef str agent_type
 
     cdef int [:,:,:,:] g
     cdef int [:,:,:,:] v
-    g, v = dist_and_vels(cars_list, sites)
+    cdef int [:,:,:,:] t
+    g, v, t = dist_and_vels(cars_list, sites, n_hdv)
 
     cdef double[:] r = np.random.random(num_cars)
+    cdef int[:] arranged_ind = np.asarray(np.argsort(cars_list[:,1]), dtype = int)
     
     sites = empy_car_sites(cars_list, sites)
     
@@ -245,16 +264,16 @@ cdef change_lane(int[:,:] cars_list, int[:,:] sites, int n_hdv, double P_lc, int
         else:
             agent_type = 'CAV'
 
-        if r[i] < P_lc:
+        if (r[i] < P_lc or i >= n_hdv):
             present_lane = cars_list[i,0]
-            if CL_incentive_criterion(vel[i], g[i,present_lane,0,0], v[i,present_lane,0,0], model, agent_type): #CL_incentive_criterion(vel[i], 0, 0, model, agent_type):
-                for lane in range(num_lanes):
+            if CL_incentive_criterion(vel[i], g[i,present_lane,0,0], v[i,present_lane,0,0], model, agent_type):
+                for lane in range(num_lanes):   #bad one
                     if lane != present_lane:
-                        if CL_safety_criterion(vel[i], g[i,lane,0,0], v[i,lane,0,0], g[i,lane,1,0], v[i,lane,1,0], model, agent_type): #CL_safety_criterion(vel[i], 0, 0, 0, 0, model, agent_type):
+                        if CL_safety_criterion(vel[i], g[i,lane,0,0], v[i,lane,0,0], g[i,lane,1,0], v[i,lane,1,0], t[i,present_lane,0,0], t[i,lane,0,0], model, agent_type):
                             cars_list[i,0] = lane
                             num_change_lane += 1
                             break
-
+    
     sites = update_car_sites(cars_list, sites)
     return sites, cars_list, num_change_lane
 
@@ -380,7 +399,7 @@ cdef move_W184(int[:,:] cars_list, int[:,:] sites, int n_hdv, int max_platoon_si
     cdef int num_cells = sites.shape[1]
     cdef int num_places = sites.shape[2]
     cdef int num_cars = len(cars_list)
-    cdef double[:] p = np.array([0.3, 0.7, 0.99])   #p = np.array([0.3, 0.7, 0.99])
+    cdef double[:] p = np.array([0.1, 0.3, 0.95])
     cdef double[:] r_1 = np.random.random(num_cars)
     cdef double[:] r_2 = np.random.random(num_cars)
     cdef double[:] r_3 = np.random.random(num_cars)
@@ -402,8 +421,8 @@ cdef move_W184(int[:,:] cars_list, int[:,:] sites, int n_hdv, int max_platoon_si
 
     # Acceleration and random stop for human-driven vehicles
     for i in range(n_hdv):
-        #if (g[i,0] > 2 and r_3[i] < p[2]) or (g[i,0] == 2 and r_2[i] < p[1]) or (g[i,0] == 1 and r_1[i] < p[0]):
-        if (g[i,0] > 3) or (g[i,0] == 3 and r_3[i] < p[2]) or (g[i,0] == 2 and r_2[i] < p[1]) or (g[i,0] == 1 and r_1[i] < p[0]):
+        #((g[i,0] > 3) or (g[i,0] == 3 and r_3[i] < p[2]) or (g[i,0] == 2 and r_2[i] < p[1]) or (g[i,0] == 1 and r_1[i] < p[0]))
+        if ((g[i,0] > 4) or (g[i,0] >= 3 and r_3[i] < p[2]) or (g[i,0] == 2 and r_2[i] < p[1]) or (g[i,0] == 1 and r_1[i] < p[0])):
             v[i] = 1
         else:
             v[i] = 0
@@ -442,7 +461,7 @@ cdef move_KKW(int[:,:] cars_list, int[:,:] sites, int n_hdv, int max_platoon_siz
     '''
     Single move action: update system from t to t+1 with Kerner-Klenov-Wolf model
     '''
-    cdef int k = 2
+    cdef int k = 3
     cdef double p_brake = 0.25
     cdef double p_accel = 0.25
     cdef int V_max = 5
@@ -554,7 +573,7 @@ cdef fill_episode(int [:,:] sites, int time_iter, int[:,:,:] episodes):
             else:
                 episodes[lane,time_iter,place] = 0
 
-cpdef run_simulation(int num_lanes, int num_places, double density, double P_lc, int time_steady, int num_iters, double R_hdv, int max_platoon_size, int N_c, bint visualise):
+cpdef run_simulation(int num_lanes, int num_places, double density, double P_lc, int time_steady, int num_iters, double R_hdv, int max_platoon_size, int N_c, str model, bint visualise):
     '''
     Single run of a traffic simulation: returns density and flux
     num_lanes - a number of lanes
@@ -582,26 +601,25 @@ cpdef run_simulation(int num_lanes, int num_places, double density, double P_lc,
     if visualise == True:
         fill_episode(X, 0, episodes)
 
-    for i in range(time_steady):
-        X, C, num_change_lane = move_SNFS(C, X, n_hdv, max_platoon_size, N_c, P_lc, num_change_lane)
-        #X, C, num_change_lane = move_W184(C, X, n_hdv, max_platoon_size, N_c, P_lc, num_change_lane)
-        #X, C, num_change_lane =  move_KKW(C, X, n_hdv, max_platoon_size, N_c, P_lc, num_change_lane)
+    for i in range(time_steady+num_iters):
+        if model == 'S-NFS':
+            X, C, num_change_lane = move_SNFS(C, X, n_hdv, max_platoon_size, N_c, P_lc, num_change_lane)
+        elif model == 'W184':
+            X, C, num_change_lane = move_W184(C, X, n_hdv, max_platoon_size, N_c, P_lc, num_change_lane)
+        elif model == 'KKW':
+            X, C, num_change_lane =  move_KKW(C, X, n_hdv, max_platoon_size, N_c, P_lc, num_change_lane)
+        else:
+            print('no model available')
+            break
 
+        if i > time_steady:
+            rho, q = macroparameters(X)
+            flux += q
+            v_av += average_velocity(C, N_c)
+        
         if visualise == True:
             fill_episode(X, i+1, episodes)
 
-    for i in range(num_iters):
-        X, C, num_change_lane = move_SNFS(C, X, n_hdv, max_platoon_size, N_c, P_lc, num_change_lane)
-        #X, C, num_change_lane = move_W184(C, X, n_hdv, max_platoon_size, N_c, P_lc, num_change_lane)
-        #X, C, num_change_lane =  move_KKW(C, X, n_hdv, max_platoon_size, N_c, P_lc, num_change_lane)
-
-        if visualise == True:
-            fill_episode(X, time_steady + i + 1, episodes)
-
-        rho, q = macroparameters(X)
-        flux += q
-        v_av += average_velocity(C, N_c)
-    
     flux /= num_iters
     v_av /= num_iters
     change_lane_rate = num_change_lane/(num_iters*num_places)
