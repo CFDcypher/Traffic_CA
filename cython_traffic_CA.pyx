@@ -145,17 +145,17 @@ cdef double[:] prob_slow_down(int[:,:] cars_list, int[:,:] g, int[:,:] v_next, i
 cdef int neighb_car_type(int [:,:] cars_list, int lane, int position, int distance, int max_distance, int n_hdv):
     cdef int i
     cdef int num_cars = len(cars_list)
-    cdef type_identification = False
+    cdef type_identification_on = True # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    cdef int agent_type = 0
     
-    if not type_identification or (distance >= max_distance):  # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        return 0    #0 means there is no car within max_distance
-    else:
+    if (type_identification_on) and (distance < max_distance):
         for i in range(num_cars):
             if (cars_list[i, 0] == lane and cars_list[i, 1] == position):
                 if i < n_hdv:
-                    return 1
+                    agent_type = 1
                 else:
-                    return 2
+                    agent_type = 2
+    return agent_type
 
 
 cdef dist_and_vels(int [:,:] cars_list, int[:,:] sites, int n_hdv):
@@ -224,7 +224,7 @@ cdef str agent_type(int ID, int n_hdv, int n_cav):
         return 'HAV'
 
 
-cdef bint CL_inc_crit(int vel, int g_f_PL, int v_f_PL, int g_f_AL, int v_f_AL, int t_f_PL, int t_f_AL, str model, str agent_type):
+cdef bint CL_inc_crit(int vel, int g_f_PL, int v_f_PL, int g_f_AL, int v_f_AL, int t_f_PL, int t_f_AL, int t_b_AL, str model, str agent_type):
     #cdef bint CAV_change
     #cdef double P_CAV_CL = 0.15
 
@@ -238,9 +238,9 @@ cdef bint CL_inc_crit(int vel, int g_f_PL, int v_f_PL, int g_f_AL, int v_f_AL, i
 
     elif model == 'W184':
         if agent_type == 'HDV':
-            return g_f_PL <= 1 and g_f_AL >= 3
+            return g_f_PL <= 0 and g_f_AL >= 1 and v_f_AL > 0
         elif agent_type == 'CAV':
-            return g_f_PL <= 1 and g_f_AL >= 3
+            return g_f_PL <= 1 and g_f_AL >= 0 and (t_f_AL == 2 or t_b_AL == 2)  #and v_f_AL > 0 #t_f_PL == 2 or t_b_AL == 2 and 
             #(g_f_PL <  g_f_AL) and (g_f_PL < 5) (vel > 0)
             #CAV_change = (t_f_AL == 2) 
             #(vel > 0) and (g_f_PL < 5) and (g_f_PL <  g_f_AL) #and (np.random.random() < P_CAV_CL)) or CAV_change
@@ -254,7 +254,7 @@ cdef bint CL_safe_crit(int vel, int g_b_AL, int v_b_AL, str model):
     if (model == 'S-NFS') or (model == 'KKW'):
         return vel >= v_b_AL - g_b_AL
     elif model == 'W184':
-        return g_b_AL >= 3 # when it's 0, everything is quite usual #vel >= v_b_AL - g_b_AL + W184_gap
+        return g_b_AL >= 1 # when it's 0, everything is quite usual #vel >= v_b_AL - g_b_AL + W184_gap
 
     
 cdef change_lane(int[:,:] cars_list, int[:,:] sites, int n_hdv, double P_lc, int num_change_lane, str model):
@@ -277,7 +277,7 @@ cdef change_lane(int[:,:] cars_list, int[:,:] sites, int n_hdv, double P_lc, int
         PL = cars_list[i,0]
         AL = (PL + 1)%num_lanes #this choses only one lane, if there is three lanes, it will lead to a bug
         agent = agent_type(i, n_hdv, num_cars - n_hdv)
-        if CL_inc_crit(vel[i], g[i,PL,0,0], v[i,PL,0,0], g[i,AL,0,0], v[i,AL,0,0], t[i,PL,0,0], t[i,AL,0,0], model, agent):
+        if CL_inc_crit(vel[i], g[i,PL,0,0], v[i,PL,0,0], g[i,AL,0,0], v[i,AL,0,0], t[i,PL,0,0], t[i,AL,0,0], t[i,AL,1,0], model, agent):
             if CL_safe_crit(vel[i], g[i,AL,1,0], v[i,AL,1,0], model):
                 if (r[i] <= P_lc and agent == 'HDV') or agent == 'CAV':
                     cars_list[i,0] = AL
